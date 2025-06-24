@@ -66,12 +66,6 @@ pub enum TransceiverMode {
     RxSweep = 5,
 }
 
-#[repr(u8)]
-pub enum SyncMode {
-    Off = 0,
-    On = 1,
-}
-
 pub const TRANSFER_COUNT: u8 = 4;
 pub const TRANSFER_BUFFER_SIZE: u32 = 262144;
 pub const DEVICE_BUFFER_SIZE: u32 = 32768;
