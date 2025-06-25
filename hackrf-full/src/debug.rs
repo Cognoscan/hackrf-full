@@ -55,11 +55,11 @@ impl M0State {
 ///
 /// Borrows the interface while doing operations.
 pub struct Debug<'a> {
-    inner: &'a HackRf,
+    inner: &'a mut HackRf,
 }
 
 impl<'a> Debug<'a> {
-    pub(crate) fn new(inner: &'a HackRf) -> Debug<'a> {
+    pub(crate) fn new(inner: &'a mut HackRf) -> Debug<'a> {
         Self { inner }
     }
 
@@ -83,7 +83,7 @@ impl<'a> Debug<'a> {
     /// After every transfer completes, an optional callback will be invoked
     /// with the number of bytes transferred as the first argument, and the
     /// total number of bytes to be transferred as the second argument.
-    pub async fn cpld_write<F>(&self, data: &[u8], mut callback: Option<F>) -> Result<(), Error>
+    pub async fn cpld_write<F>(&mut self, data: &[u8], mut callback: Option<F>) -> Result<(), Error>
     where
         F: FnMut(usize, usize),
     {
@@ -118,6 +118,9 @@ impl<'a> Debug<'a> {
                 c(sent, total);
             }
         }
+        self.inner
+            .set_transceiver_mode(TransceiverMode::Off)
+            .await?;
         Ok(())
     }
 

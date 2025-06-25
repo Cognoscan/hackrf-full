@@ -3,6 +3,7 @@
 mod error;
 pub mod info;
 pub mod debug;
+mod rx;
 mod consts;
 use std::ops::Range;
 
@@ -10,6 +11,7 @@ use bytemuck::Pod;
 pub use debug::Debug;
 pub use info::Info;
 pub use error::Error;
+pub use rx::Receive;
 use consts::*;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 
@@ -340,7 +342,7 @@ impl HackRf {
     }
 
     /// Access the debug/programming commands for the HackRF.
-    pub fn debug(&self) -> Debug<'_> {
+    pub fn debug(&mut self) -> Debug<'_> {
         Debug::new(self)
     }
 
@@ -666,8 +668,8 @@ impl HackRf {
             .await
     }
 
-    pub async fn start_rx(&self) -> Result<(), Error> {
-        todo!("Start RX")
+    pub async fn start_rx(self, transfer_size: usize) -> Result<Receive, (HackRf, Error)> {
+        Receive::new(self, transfer_size).await
     }
 
     pub async fn start_rx_sweep(&self) -> Result<(), Error> {

@@ -19,4 +19,6 @@ pub enum Error {
     ApiVersion { needed: u16, actual: u16 },
     #[error("Invalid Parameter")]
     InvalidParameter,
+    #[error("USB transfer pipe is full of pending transfers")]
+    TransferBusy,
 }
