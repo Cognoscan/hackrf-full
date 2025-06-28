@@ -10,20 +10,46 @@ mod tx;
 use std::ops::Range;
 
 use bytemuck::Pod;
-use consts::*;
-pub use debug::Debug;
-pub use error::{Error, StateChangeError};
-pub use info::Info;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
-pub use rx::Receive;
 use std::sync::mpsc;
-pub use sweep::{Sweep, SweepBuf, SweepParams};
 
-use crate::tx::Transmit;
+use crate::consts::*;
+use crate::debug::Debug;
+use crate::info::Info;
 
+pub use crate::error::{Error, StateChangeError};
+pub use crate::rx::Receive;
+pub use crate::sweep::{Sweep, SweepBuf, SweepParams};
+pub use crate::tx::Transmit;
+
+/// Complex 8-bit signed data, as used by the HackRF.
 pub type ComplexI8 = num_complex::Complex<i8>;
 
-/// A Buffer holding USB transfer data.
+/// Operacake port A1
+pub const PORT_A1: u8 = 0;
+/// Operacake port A2
+pub const PORT_A2: u8 = 1;
+/// Operacake port A3
+pub const PORT_A3: u8 = 2;
+/// Operacake port A4
+pub const PORT_A4: u8 = 3;
+/// Operacake port B1
+pub const PORT_B1: u8 = 4;
+/// Operacake port B2
+pub const PORT_B2: u8 = 5;
+/// Operacake port B3
+pub const PORT_B3: u8 = 6;
+/// Operacake port B4
+pub const PORT_B4: u8 = 7;
+
+/// A Buffer holding HackRF transfer data.
+///
+/// Samples can be directly accessed as slices, and can be extended up to the
+/// length of the fixed-size underlying buffer.
+///
+/// When dropped, this buffer returns to the internal buffer pool it came from.
+/// It can either be backed by an allocation from the system allocator, or by
+/// some platform-specific way of allocating memory for zero-copy USB transfers.
 pub struct Buffer {
     buf: Vec<u8>,
     pool: mpsc::Sender<Vec<u8>>,
@@ -39,6 +65,7 @@ impl Buffer {
         core::mem::take(&mut self.buf)
     }
 
+    /// Get how many samples this buffer can hold.
     pub fn capacity(&self) -> usize {
         // Force down to the nearest 512-byte boundary, which is the transfer
         // size the HackRF requires.
@@ -91,6 +118,11 @@ impl Buffer {
         &self.buf
     }
 
+    /// Get the sample sequence as a mutable slice of bytes instead of complex values.
+    pub fn bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+
     /// Get the samples in the buffer.
     pub fn samples(&self) -> &[ComplexI8] {
         let buf: &[u8] = &self.buf;
@@ -131,13 +163,22 @@ impl Drop for Buffer {
     }
 }
 
+/// Configuration settings for the Bias-T switch.
+///
+/// Used when calling [`HackRf::set_user_bias_t_opts`].
 #[derive(Clone, Debug)]
 pub struct BiasTSetting {
-    tx: BiasTMode,
-    rx: BiasTMode,
-    off: BiasTMode,
+    /// What mode change to apply when switching to transmit.
+    pub tx: BiasTMode,
+    /// What mode change to apply when switching to receive.
+    pub rx: BiasTMode,
+    /// What mode change to apply when switching off.
+    pub off: BiasTMode,
 }
 
+/// A Bias-T setting change to apply on a mode change.
+///
+/// See [`BiasTSetting`] for where to use this.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BiasTMode {
     NoChange,
@@ -156,10 +197,12 @@ impl BiasTMode {
 }
 
 /// RF Filter Setting Option.
+///
+/// Use when calling [`HackRf::set_freq_explicit`].
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RfPathFilter {
-    /// No filter selected
+    /// No filter selected - mixer bypassed.
     Bypass = 0,
     /// Low pass filter, `f_c = f_IF - f_LO`
     LowPass = 1,
@@ -177,32 +220,56 @@ impl std::fmt::Display for RfPathFilter {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Configuration for an Operacake board.
+///
+/// An Operacake board has three different operating modes:
+///
+/// - Manual: the switches are manually set and don't change until the next
+///   configuration operation.
+/// - Frequency: the switches change depending on the center frequency the board
+///   is tuned to.
+/// - Time: the switches change after some number of samples have been
+///   sent/received.
+///
+/// Use when calling [`HackRf::operacake_config`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
 pub enum OperacakeMode {
-    /// Switched manually using `set_ports`.
-    Manual { a: u8, b: u8 },
-    /// Switched automatically when frequency is changed.
-    Frequency(Vec<OperacakeFreq>),
-    /// Dwell Time mode.
-    Time(Vec<OpercakeDwell>),
+    Manual = 0,
+    Frequency = 1,
+    Time = 2,
 }
 
+/// A Frequency band allocated to a specific port for all Operacakes operating
+/// in frequency mode.
 #[derive(Clone, Copy, Debug)]
 pub struct OperacakeFreq {
     /// Start frequency, in MHz.
-    min: u16,
+    pub min: u16,
     /// Stop frequency, in MHz.
-    max: u16,
+    pub max: u16,
     /// Port for A0 to use for the range. B0 will use the mirror image.
-    port: u8,
+    pub port: u8,
 }
 
+/// A dwell time allocated to a specific port for all Operacakes operating in
+/// dwell time mode.
+///
+/// Ports are zero-indexed:
+/// - A1 = 0
+/// - A2 = 1
+/// - A3 = 2
+/// - A4 = 3
+/// - B1 = 4
+/// - B2 = 5
+/// - B3 = 6
+/// - B4 = 7
 #[derive(Clone, Copy, Debug)]
-pub struct OpercakeDwell {
+pub struct OperacakeDwell {
     /// Dwell time, in number of samples
-    dwell: u32,
+    pub dwell: u32,
     /// Port for A0 to use for the range. B0 will use the mirror image.
-    port: u8,
+    pub port: u8,
 }
 
 /// A HackRF device. This is the main struct for talking to the HackRF.
@@ -236,10 +303,12 @@ impl std::fmt::Display for HackRfType {
 }
 
 impl HackRfDescriptor {
+    /// Get the serial number of this HackRF, as a string.
     pub fn serial(&self) -> Option<&str> {
         self.info.serial_number()
     }
 
+    /// Get the [type][HackRfType] of HackRF radio this is.
     pub fn radio_type(&self) -> HackRfType {
         match self.info.product_id() {
             HACKRF_JAWBREAKER_USB_PID => HackRfType::Jawbreaker,
@@ -249,6 +318,7 @@ impl HackRfDescriptor {
         }
     }
 
+    /// Try and open this HackRf device descriptor.
     pub fn open(self) -> Result<HackRf, std::io::Error> {
         let version = self.info.device_version();
         let ty = self.radio_type();
@@ -270,6 +340,8 @@ impl HackRfDescriptor {
     }
 }
 
+/// Try and turn any [`nusb::DeviceInfo`] descriptor into a HackRF, failing if
+/// the VID and PID don't match any known devices.
 impl TryFrom<nusb::DeviceInfo> for HackRfDescriptor {
     type Error = &'static str;
     fn try_from(value: nusb::DeviceInfo) -> Result<Self, Self::Error> {
@@ -303,6 +375,8 @@ pub fn list_hackrf_devices() -> Result<Vec<HackRfDescriptor>, std::io::Error> {
 }
 
 /// Open the first detected HackRF device in the system.
+///
+/// This is a shortcut for calling [`list_hackrf_devices`] and opening the first one.
 pub fn open_hackrf() -> Result<HackRf, std::io::Error> {
     list_hackrf_devices()?
         .into_iter()
@@ -440,17 +514,40 @@ impl HackRf {
             .await
     }
 
+    /// Set the baseband filter bandwidth.
+    ///
+    /// The possible settings are: 1.75, 2.5, 3.5, 5, 5.5, 6, 7, 8, 9, 10, 12,
+    /// 14, 15, 20, 24, and 28 MHz. This function will choose the nearest,
+    /// rounded down.
+    ///
+    /// The default is to set this to 3/4 of the sample rate, rounded down to
+    /// the nearest setting.
+    ///
+    /// Setting the sample rate with [`set_sample_rate`][Self::set_sample_rate]
+    /// will modify this setting.
     pub async fn set_baseband_filter_bandwidth(&self, bandwidth_hz: u32) -> Result<(), Error> {
+        let bandwidth_hz = baseband_filter_bw(bandwidth_hz);
         self.write_u32(ControlRequest::BasebandFilterBandwidthSet, bandwidth_hz)
             .await
     }
 
+    /// Set the transmit underrun limit. This will cause the HackRF to stop
+    /// operation if transmit runs out of samples to send. Set to 0 to disable.
+    ///
+    /// This will also cause all outstanding transmits to stall forever, so some
+    /// timeout will need to be added to the transmit completion futures.
     pub async fn set_tx_underrun_limit(&self, val: u32) -> Result<(), Error> {
         self.api_check(0x0106)?;
         self.write_u32(ControlRequest::SetTxUnderrunLimit, val)
             .await
     }
 
+    /// Set the receive overrun limit. This will cause the HackRF to stop
+    /// operation if more than the specified amount of samples get lost. Set to
+    /// 0 to disable.
+    ///
+    /// This will also cause all outstanding receives to stall forever, so some
+    /// timeout will need to be added to the receive completion futures.
     pub async fn set_rx_overrun_limit(&self, val: u32) -> Result<(), Error> {
         self.api_check(0x0106)?;
         self.write_u32(ControlRequest::SetRxOverrunLimit, val).await
@@ -466,6 +563,11 @@ impl HackRf {
         Info::new(self)
     }
 
+    /// Set the operating frequency (recommended method).
+    ///
+    /// This uses the internal frequency tuning code onboard the HackRF, which
+    /// can differ between boards. It automatically sets the LO and IF
+    /// frequencies, as well as the RF path filter.
     pub async fn set_freq(&self, freq_hz: u64) -> Result<(), Error> {
         const ONE_MHZ: u64 = 1_000_000;
         #[repr(C)]
@@ -485,6 +587,18 @@ impl HackRf {
             .await
     }
 
+    /// Set the IF & LO tuning frequencies, and the RF path filter.
+    ///
+    /// You may be looking for [`set_freq`][HackRf::set_freq] instead.
+    ///
+    /// This sets the center frequency to `f_c = f_IF + k * f_LO`, where k is
+    /// -1, 0, or 1 depending on the filter selected.
+    ///
+    /// IF frequency *must* be between 2-3 GHz, and it's strongly recommended to
+    /// be between 2170-2740 MHz.
+    ///
+    /// LO frequency must be between 84.375-5400 MHz. No effect if the filter is
+    /// set to bypass mode.
     pub async fn set_freq_explicit(
         &self,
         if_freq_hz: u64,
@@ -533,6 +647,19 @@ impl HackRf {
             .await
     }
 
+    /// Set the sample rate using a clock frequency in Hz and a divider value.
+    ///
+    /// The resulting sample rate is `freq_hz/divider`. Divider value can be
+    /// 1-31, and the rate range should be 2-20MHz. Lower & higher values are
+    /// technically possible, but not recommended.
+    ///
+    /// This function will always call
+    /// [`set_baseband_filter_bandwidth`][Self::set_baseband_filter_bandwidth],
+    /// so any changes to the filter should be done *after* this function.
+    ///
+    /// You may want to just use [`set_sample_rate`][Self::set_sample_rate]
+    /// instead.
+    ///
     pub async fn set_sample_rate_manual(&self, freq_hz: u32, divider: u32) -> Result<(), Error> {
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
@@ -562,6 +689,17 @@ impl HackRf {
         Ok(())
     }
 
+    /// Set the sample rate, which should be between 2-20 MHz.
+    ///
+    /// Lower & higher rates are possible, but not recommended.
+    ///
+    /// This function will always call
+    /// [`set_baseband_filter_bandwidth`][Self::set_baseband_filter_bandwidth],
+    /// so any changes to the filter should be done *after* this function.
+    ///
+    /// This function is a convenience wrapper around
+    /// [`set_sample_rate_manual`][Self::set_sample_rate_manual].
+    ///
     pub async fn set_sample_rate(&self, freq: f64) -> Result<(), Error> {
         let freq = freq.clamp(2e6, 20e6);
 
@@ -584,11 +722,20 @@ impl HackRf {
         self.set_sample_rate_manual(freq_hz, divider).await
     }
 
+    /// Enable/disable the 14dB RF amplifiers.
+    ///
+    /// Enable/disable the RX/TX amplifiers U13/U25 via the controlling switches
+    /// U9 and U14.
     pub async fn set_amp_enable(&self, enable: bool) -> Result<(), Error> {
         self.write_u16(ControlRequest::AmpEnable, 0, enable as u16)
             .await
     }
 
+    /// Set the LNA gain.
+    ///
+    /// Sets the RF RX gain of the MAX2837 transceiver IC. Must be in the range
+    /// of 0-40 dB, and is forced to 8 dB steps. Intermediate values are rounded
+    /// down.
     pub async fn set_lna_gain(&self, value: u16) -> Result<(), Error> {
         if value > 40 {
             return Err(Error::ValueRange {
@@ -606,6 +753,11 @@ impl HackRf {
         Ok(())
     }
 
+    /// Set the VGA gain.
+    ///
+    /// Sets the baseband RX gain of the MAX2837 transceiver IC. Must be in the range
+    /// of 0-62 dB, and is forced to 2 dB steps. Intermediate values are rounded
+    /// down.
     pub async fn set_vga_gain(&self, value: u16) -> Result<(), Error> {
         if value > 62 {
             return Err(Error::ValueRange {
@@ -623,6 +775,10 @@ impl HackRf {
         Ok(())
     }
 
+    /// Set the RF TX gain.
+    ///
+    /// Sets the RF TX gain of the MAX2837 transceiver IC. Must be in the range
+    /// of 0-47 dB.
     pub async fn set_txvga_gain(&self, value: u16) -> Result<(), Error> {
         if value > 47 {
             return Err(Error::ValueRange {
@@ -638,12 +794,26 @@ impl HackRf {
         Ok(())
     }
 
+    /// Temporarily enable/disable the bias-tee (antenna port power).
+    ///
+    /// Enable or disable the **3.3v (max 50 mA)** bias-tee. Defaults to
+    /// disabled on power-up.
+    ///
+    /// The firmware auto-disables this after returning to IDLE mode. Consider
+    /// using [`set_user_bias_t_opts`][Self::set_user_bias_t_opts] instead to
+    /// configure the bias to work exactly the way you want it to.
     pub async fn set_antenna_enable(&self, enable: bool) -> Result<(), Error> {
         self.write_u16(ControlRequest::AntennaEnable, 0, enable as u16)
             .await
     }
 
     /// Set hardware sync mode (hardware triggering).
+    ///
+    /// See the documentation
+    /// [here](https://hackrf.readthedocs.io/en/latest/hardware_triggering.html).
+    ///
+    /// When enabled, the next operating mode (RX, TX, or Sweep) will not start
+    /// until the input hardware trigger occurs.
     ///
     /// Requires API version 0x0102 or higher.
     pub async fn set_hw_sync_mode(&self, enable: bool) -> Result<(), Error> {
@@ -652,6 +822,9 @@ impl HackRf {
             .await
     }
 
+    /// Get a list of what operacake boards are attached (up to 8).
+    ///
+    /// Requires API version 0x0105 or higher.
     pub async fn operacake_boards(&self) -> Result<Vec<u8>, Error> {
         self.api_check(0x0105)?;
         let mut resp = self
@@ -661,101 +834,183 @@ impl HackRf {
         Ok(resp)
     }
 
-    pub async fn operacake_config(
+    /// Set an Operacake board to a specific operating mode.
+    ///
+    /// When set to frequency or dwell time mode, the settings are shared
+    /// between all operacakes in that operating mode.
+    ///
+    /// Requires API version 0x0105 or higher.
+    pub async fn operacake_set_mode(
         &self,
         address: u8,
-        setting: &OperacakeMode,
+        setting: OperacakeMode,
     ) -> Result<(), Error> {
         self.api_check(0x0105)?;
         if address > 7 {
             return Err(Error::InvalidParameter("Operacake address is out of range"));
         }
-        match setting {
-            OperacakeMode::Manual { a, b } => {
-                let a = *a as u16;
-                let b = *b as u16;
-                if a > 7 || b > 7 {
-                    return Err(Error::InvalidParameter(
-                        "One or more port numbers is out of range (0-7)",
-                    ));
-                }
-                if (a < 4 && b < 4) || (a >= 4 && b >= 4) {
-                    return Err(Error::InvalidParameter(
-                        "A0 & B0 ports are using same quad of multiplexed ports",
-                    ));
-                }
-                self.write_u8(ControlRequest::OperacakeSetMode, 0, address)
-                    .await?;
-                self.write_u8(ControlRequest::OperacakeSetPorts, a | (b << 8), address)
-                    .await
-            }
-            OperacakeMode::Frequency(f) => {
-                let freqs = f.as_slice();
-                if freqs.len() > 8 {
-                    return Err(Error::InvalidParameter(
-                        "Operacake can only support 8 frequency bands max",
-                    ));
-                }
-                let mut data = Vec::with_capacity(5 * freqs.len());
-                for f in freqs {
-                    if f.port > 7 {
-                        return Err(Error::InvalidParameter(
-                            "Operacake frequency band port selection is out of range",
-                        ));
-                    }
-                    data.push((f.min >> 8) as u8);
-                    data.push((f.min & 0xFF) as u8);
-                    data.push((f.max >> 8) as u8);
-                    data.push((f.max & 0xFF) as u8);
-                    data.push(f.port);
-                }
+        self.write_u8(ControlRequest::OperacakeSetMode, setting as u16, address)
+            .await
+    }
 
-                self.write_u8(ControlRequest::OperacakeSetMode, 1, address)
-                    .await?;
-                self.write_bytes(ControlRequest::OperacakeSetRanges, &data)
-                    .await
-            }
-            OperacakeMode::Time(t) => {
-                let times = t.as_slice();
-                if times.len() > 16 {
-                    return Err(Error::InvalidParameter(
-                        "Operacake can only support 16 time slices max",
-                    ));
-                }
-                let mut data = Vec::with_capacity(5 * times.len());
-                for t in times {
-                    if t.port > 7 {
-                        return Err(Error::InvalidParameter(
-                            "Operacake time slice port selection is out of range",
-                        ));
-                    }
-                    data.extend_from_slice(&t.dwell.to_le_bytes());
-                    data.push(t.port);
-                }
-                self.write_u8(ControlRequest::OperacakeSetMode, 2, address)
-                    .await?;
-                self.write_bytes(ControlRequest::OperacakeSetRanges, &data)
-                    .await
-            }
+    /// Get the operating mode of an operacake board.
+    ///
+    /// Requires API version 0x0105 or higher.
+    pub async fn operacake_get_mode(&self, address: u8) -> Result<OperacakeMode, Error> {
+        self.api_check(0x0105)?;
+        if address > 7 {
+            return Err(Error::InvalidParameter("Operacake address is out of range"));
+        }
+        let ret = self
+            .interface
+            .control_in(ControlIn {
+                control_type: ControlType::Vendor,
+                recipient: Recipient::Device,
+                request: ControlRequest::OperacakeGetMode as u8,
+                value: address as u16,
+                index: 0,
+                length: 1,
+            })
+            .await
+            .into_result()?;
+        let ret = ret.first().ok_or(Error::ReturnData)?;
+        match ret {
+            0 => Ok(OperacakeMode::Manual),
+            1 => Ok(OperacakeMode::Frequency),
+            2 => Ok(OperacakeMode::Time),
+            _ => Err(Error::ReturnData),
         }
     }
 
+    /// Set an operacake's switches manually.
+    ///
+    /// Should be called after setting manual mode with
+    /// [`operacake_set_mode`][Self::operacake_set_mode].
+    ///
+    /// Requires API version 0x0102 or higher.
+    pub async fn operacake_config_manual(&self, address: u8, a: u8, b: u8) -> Result<(), Error> {
+        self.api_check(0x0102)?;
+        if address > 7 {
+            return Err(Error::InvalidParameter("Operacake address is out of range"));
+        }
+
+        if a > 7 || b > 7 {
+            return Err(Error::InvalidParameter(
+                "One or more port numbers is out of range (0-7)",
+            ));
+        }
+        if (a < 4 && b < 4) || (a >= 4 && b >= 4) {
+            return Err(Error::InvalidParameter(
+                "A0 & B0 ports are using same quad of multiplexed ports",
+            ));
+        }
+
+        let a = a as u16;
+        let b = b as u16;
+        self.write_u8(ControlRequest::OperacakeSetPorts, a | (b << 8), address)
+            .await
+    }
+
+    /// Match frequency bands to operacake ports.
+    ///
+    /// These frequency settings are used by any operacake operating in
+    /// frequency mode.
+    ///
+    /// Requires API version 0x0103 or higher.
+    pub async fn operacake_config_freq(&self, freqs: &[OperacakeFreq]) -> Result<(), Error> {
+        self.api_check(0x0103)?;
+        if freqs.len() > 8 {
+            return Err(Error::InvalidParameter(
+                "Operacake can only support 8 frequency bands max",
+            ));
+        }
+        let mut data = Vec::with_capacity(5 * freqs.len());
+        for f in freqs {
+            if f.port > 7 {
+                return Err(Error::InvalidParameter(
+                    "Operacake frequency band port selection is out of range",
+                ));
+            }
+            data.push((f.min >> 8) as u8);
+            data.push((f.min & 0xFF) as u8);
+            data.push((f.max >> 8) as u8);
+            data.push((f.max & 0xFF) as u8);
+            data.push(f.port);
+        }
+
+        self.write_bytes(ControlRequest::OperacakeSetRanges, &data)
+            .await
+    }
+
+    /// Match dwell times to operacake ports.
+    ///
+    /// These dwell time settings are used by any operacake operating in
+    /// time mode.
+    ///
+    /// Requires API version 0x0105 or higher.
+    pub async fn operacake_config_time(&self, times: &[OperacakeDwell]) -> Result<(), Error> {
+        self.api_check(0x0105)?;
+        if times.len() > 16 {
+            return Err(Error::InvalidParameter(
+                "Operacake can only support 16 time slices max",
+            ));
+        }
+        let mut data = Vec::with_capacity(5 * times.len());
+        for t in times {
+            if t.port > 7 {
+                return Err(Error::InvalidParameter(
+                    "Operacake time slice port selection is out of range",
+                ));
+            }
+            data.extend_from_slice(&t.dwell.to_le_bytes());
+            data.push(t.port);
+        }
+        self.write_bytes(ControlRequest::OperacakeSetDwellTimes, &data)
+            .await
+    }
+
+    /// Reset the HackRF.
+    ///
+    /// Requires API version 0x0102 or higher.
     pub async fn reset(&self) -> Result<(), Error> {
         self.api_check(0x0102)?;
         self.write_u16(ControlRequest::Reset, 0, 0).await
     }
 
+    /// Turn on the CLKOUT port.
+    ///
+    /// Requires API version 0x0103 or higher.
     pub async fn clkout_enable(&self, enable: bool) -> Result<(), Error> {
         self.api_check(0x0103)?;
         self.write_u16(ControlRequest::ClkoutEnable, 0, enable as u16)
             .await
     }
 
+    /// Check the CLKIN port status.
+    ///
+    /// Set to true if the CLKIN port is used as the reference clock.
+    ///
+    /// Requires API version 0x0106 or higher.
     pub async fn clkin_status(&self) -> Result<bool, Error> {
         self.api_check(0x0106)?;
         Ok(self.read_u8(ControlRequest::GetClkinStatus, 0).await? != 0)
     }
 
+    /// Perform a GPIO test of an Operacake board.
+    ///
+    /// Value 0xFFFF means "GPIO mode disabled" - remove additional add-on
+    /// boards and retry.
+    ///
+    /// Value 0 means all tests passed.
+    ///
+    /// In any other values, a 1 bit signals an error. Bits are grouped in
+    /// groups of 3. Encoding:
+    ///
+    /// ```text
+    /// 0 - u1ctrl - u3ctrl0 - u3ctrl1 - u2ctrl0 - u2ctrl1
+    /// ```
+    ///
+    /// Requires API version 0x0103 or higher.
     pub async fn operacake_gpio_test(&self, address: u8) -> Result<u16, Error> {
         self.api_check(0x0103)?;
         if address > 7 {
@@ -777,16 +1032,35 @@ impl HackRf {
         Ok(u16::from_le_bytes(ret))
     }
 
+    /// Enable/disable the UI display on devices with one (Rad1o, PortaPack).
+    ///
+    /// Requires API version 0x0104 or higher.
     pub async fn set_ui_enable(&self, val: u8) -> Result<(), Error> {
         self.api_check(0x0104)?;
         self.write_u8(ControlRequest::UiEnable, 0, val).await
     }
 
+    /// Turn the LEDs on or off, overriding the default.
+    ///
+    /// There are normally 3 controllable LEDs: USB, RX, and TX. The Rad1o board
+    /// has 4.  After setting them individually, they may get overridden later
+    /// by other functions.
+    ///
+    /// | Bit | LED  |
+    /// | --  | --   |
+    /// | 0   | USB  |
+    /// | 1   | RX   |
+    /// | 2   | TX   |
+    /// | 3   | User |
+    ///
+    /// Requires API version 0x0107 or higher.
     pub async fn set_leds(&self, state: u8) -> Result<(), Error> {
         self.api_check(0x0107)?;
         self.write_u8(ControlRequest::SetLeds, 0, state).await
     }
 
+    ///
+    /// Requires API version 0x0108 or higher.
     pub async fn set_user_bias_t_opts(&self, opts: BiasTSetting) -> Result<(), Error> {
         self.api_check(0x0108)?;
         let state: u16 =

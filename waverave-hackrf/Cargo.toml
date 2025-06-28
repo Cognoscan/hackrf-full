@@ -1,5 +1,5 @@
 [package]
-name = "hackrf-full"
+name = "waverave-hackrf"
 version = "0.1.0"
 edition = "2024"
 

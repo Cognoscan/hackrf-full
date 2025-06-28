@@ -59,7 +59,13 @@ impl Receive {
     }
 
     /// Halt receiving and return to idle mode.
-    pub async fn stop(self) -> Result<HackRf, Error> {
+    ///
+    /// This completes all outstanding transfers before halting. Transfer errors
+    /// are ignored.
+    pub async fn stop(mut self) -> Result<HackRf, Error> {
+        while self.pending() > 0 {
+            let _ = self.next_complete().await;
+        }
         self.rf.set_transceiver_mode(TransceiverMode::Off).await?;
         Ok(self.rf)
     }

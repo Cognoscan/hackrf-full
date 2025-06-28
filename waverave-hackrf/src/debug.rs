@@ -65,7 +65,7 @@ impl<'a> Debug<'a> {
 
     /// Get the internal state of the M0 code of the LPC43xx MCU.
     ///
-    /// Requires API 0x0106.
+    /// Requires API version 0x0106 or higher.
     pub async fn get_m0_state(&self) -> Result<M0State, Error> {
         self.inner.api_check(0x0106)?;
         let mut v: M0State = self.inner.read_struct(ControlRequest::GetM0State).await?;
@@ -125,6 +125,8 @@ impl<'a> Debug<'a> {
     }
 
     /// Get the checksum of the CPLD bitstream.
+    ///
+    /// Requires API version 0x0103 or higher.
     pub async fn cpld_checksum(&self) -> Result<u32, Error> {
         self.inner.api_check(0x0103)?;
         let ret = self
@@ -334,6 +336,8 @@ impl SpiFlash<'_> {
     }
 
     /// Get the status registers of the W25Q80BV flash memory.
+    ///
+    /// Requires API version 0x0103 or higher.
     pub async fn status(&self) -> Result<[u8; 2], Error> {
         self.inner.api_check(0x0103)?;
         let val = self

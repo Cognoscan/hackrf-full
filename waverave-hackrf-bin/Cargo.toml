@@ -1,10 +1,10 @@
 [package]
-name = "hackrf-full-bin"
+name = "waverave-hackrf-bin"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hackrf-full = { path = "../hackrf-full" }
+waverave-hackrf = { path = "../waverave-hackrf" }
 color-eyre = "0.6"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = [

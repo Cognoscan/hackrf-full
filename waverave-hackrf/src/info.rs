@@ -180,12 +180,16 @@ impl<'a> Info<'a> {
         Ok(v)
     }
 
+    ///
+    /// Requires API version 0x0106 or higher.
     pub async fn rev_read(&self) -> Result<BoardRev, Error> {
         self.inner.api_check(0x0106)?;
         let rev = self.inner.read_u8(ControlRequest::BoardRevRead, 0).await?;
         Ok(BoardRev::from_u8(rev))
     }
 
+    ///
+    /// Requires API version 0x0106 or higher.
     pub async fn supported_platform_read(&self) -> Result<SupportedPlatform, Error> {
         self.inner.api_check(0x0106)?;
         let ret = self
