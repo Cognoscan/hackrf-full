@@ -33,8 +33,8 @@ impl Buffer {
         Self { buf, pool }
     }
 
-    pub(crate) fn to_vec(self) -> Vec<u8> {
-        todo!()
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        core::mem::take(&mut self.buf)
     }
 
     pub fn capacity(&self) -> usize {
@@ -53,34 +53,39 @@ impl Buffer {
         self.buf.len() / core::mem::size_of::<ComplexI8>()
     }
 
+    /// Returns true if there are no samples in the buffer.
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     /// Remaining capacity in the buffer, in samples.
     pub fn remaining_capacity(&self) -> usize {
         self.capacity() - self.len()
     }
 
     /// Extend the buffer with a slice of samples.
-    /// 
+    ///
     /// # Panics
     /// - if there is no space left in the buffer for the slice.
     pub fn extend_from_slice(&mut self, slice: &[ComplexI8]) {
         assert!(self.remaining_capacity() >= slice.len());
-        let slice = unsafe {
-            core::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 2)
-        };
+        let slice =
+            unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 2) };
         self.buf.extend_from_slice(slice);
     }
 
     /// Push a value onto the buffer.
-    /// 
+    ///
     /// # Panics
     /// - if there is no space left in the buffer.
     pub fn push(&mut self, val: ComplexI8) {
         assert!(self.remaining_capacity() > 0);
-        let slice: &[u8;2] = unsafe { &*((&val) as *const ComplexI8 as *const [u8;2]) };
+        let slice: &[u8; 2] = unsafe { &*((&val) as *const ComplexI8 as *const [u8; 2]) };
         self.buf.extend_from_slice(slice);
     }
 
-    pub(crate) fn bytes(&self) -> &[u8] {
+    /// Get the sample sequence as a slice of bytes instead of complex values.
+    pub fn bytes(&self) -> &[u8] {
         &self.buf
     }
 
@@ -118,7 +123,9 @@ impl Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         let inner = core::mem::take(&mut self.buf);
-        let _ = self.pool.send(inner);
+        if inner.capacity() > 0 {
+            let _ = self.pool.send(inner);
+        }
     }
 }
 

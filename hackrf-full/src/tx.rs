@@ -1,12 +1,6 @@
 use std::sync::mpsc;
 
-use nusb::transfer::{ControlOut, ControlType, Recipient, RequestBuffer};
-
-use crate::{
-    Buffer, Error, HackRf,
-    consts::{ControlRequest, TransceiverMode},
-    error::StateChangeError,
-};
+use crate::{Buffer, Error, HackRf, consts::TransceiverMode, error::StateChangeError};
 
 /// A HackRF operating in transmit mode.
 pub struct Transmit {
@@ -37,7 +31,7 @@ impl Transmit {
     }
 
     /// Get a buffer for holding transmit data.
-    /// 
+    ///
     /// All buffers have the same capacity, set when transmit is initialized.
     /// Actual transmitted data is rounded up to the nearest 256 samples,
     /// zero-filling as needed.
@@ -60,18 +54,14 @@ impl Transmit {
     ///
     /// The buffer pool will grow so long as completed buffers aren't dropped.
     pub fn submit(&mut self, tx: Buffer) {
-        let req = if let Ok(buf) = self.buf_pool.try_recv() {
-            RequestBuffer::reuse(buf, self.max_transfer_size)
-        } else {
-            RequestBuffer::new(self.max_transfer_size)
-        };
-        self.queue.submit(req);
+        self.queue.submit(tx.into_vec());
     }
 
-    /// Retrieve the next chunk of receive data.
-    pub async fn next_complete(&mut self) -> Result<Buffer, Error> {
-        let buf = self.queue.next_complete().await.into_result()?;
-        Ok(Buffer::new(buf, self.buf_pool_send.clone()))
+    /// Wait for a transmit operation to complete
+    pub async fn next_complete(&mut self) -> Result<(), Error> {
+        let result = self.queue.next_complete().await;
+        let _ = self.buf_pool_send.send(result.data.reuse());
+        Ok(result.status?)
     }
 
     /// Get the number of pending requests.
