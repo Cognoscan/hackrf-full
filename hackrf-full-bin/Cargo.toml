@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 hackrf-full = { path = "../hackrf-full" }
 color-eyre = "0.6"
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",

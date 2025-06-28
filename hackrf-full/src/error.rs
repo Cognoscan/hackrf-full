@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::HackRf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -17,8 +18,39 @@ pub enum Error {
     ReturnData,
     #[error("Requires API >= 0x{:x}, but device has API 0x{:x}", needed, actual)]
     ApiVersion { needed: u16, actual: u16 },
-    #[error("Invalid Parameter")]
-    InvalidParameter,
+    #[error("Invalid Parameter: {0}")]
+    InvalidParameter(&'static str),
     #[error("USB transfer pipe is full of pending transfers")]
     TransferBusy,
+}
+
+/// An error from trying to change HackRF states and failing.
+/// 
+/// Always contains the HackRF instance, but in an unknown state. To try and
+/// return to a known state, try calling [`HackRf::turn_off`].
+pub struct StateChangeError {
+    /// The error that occurred while trying to change state.
+    pub err: Error,
+    /// The HackRF instance.
+    pub rf: HackRf,
+}
+
+impl core::error::Error for StateChangeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.err)
+    }
+}
+
+impl core::fmt::Display for StateChangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Failed to change state")
+    }
+}
+
+impl core::fmt::Debug for StateChangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateChangeError")
+            .field("err", &self.err)
+            .finish_non_exhaustive()
+    }
 }

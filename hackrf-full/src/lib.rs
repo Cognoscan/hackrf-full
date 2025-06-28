@@ -1,19 +1,126 @@
 #![allow(dead_code)]
 
+mod consts;
+pub mod debug;
 mod error;
 pub mod info;
-pub mod debug;
 mod rx;
-mod consts;
+mod sweep;
+mod tx;
 use std::ops::Range;
 
 use bytemuck::Pod;
-pub use debug::Debug;
-pub use info::Info;
-pub use error::Error;
-pub use rx::Receive;
 use consts::*;
+pub use debug::Debug;
+pub use error::{Error, StateChangeError};
+pub use info::Info;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
+pub use rx::Receive;
+use std::sync::mpsc;
+pub use sweep::{Sweep, SweepBuf, SweepParams};
+
+pub type ComplexI8 = num_complex::Complex<i8>;
+
+/// A Buffer holding USB transfer data.
+pub struct Buffer {
+    buf: Vec<u8>,
+    pool: mpsc::Sender<Vec<u8>>,
+}
+
+impl Buffer {
+    pub(crate) fn new(buf: Vec<u8>, pool: mpsc::Sender<Vec<u8>>) -> Self {
+        assert!(buf.len() & 0x1FF == 0);
+        Self { buf, pool }
+    }
+
+    pub(crate) fn to_vec(self) -> Vec<u8> {
+        todo!()
+    }
+
+    pub fn capacity(&self) -> usize {
+        // Force down to the nearest 512-byte boundary, which is the transfer
+        // size the HackRF requires.
+        (self.buf.capacity() & !0x1FF) / core::mem::size_of::<ComplexI8>()
+    }
+
+    //// Clear out the buffer's samples.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+    }
+
+    /// Size of the buffer, in samples.
+    pub fn len(&self) -> usize {
+        self.buf.len() / core::mem::size_of::<ComplexI8>()
+    }
+
+    /// Remaining capacity in the buffer, in samples.
+    pub fn remaining_capacity(&self) -> usize {
+        self.capacity() - self.len()
+    }
+
+    /// Extend the buffer with a slice of samples.
+    /// 
+    /// # Panics
+    /// - if there is no space left in the buffer for the slice.
+    pub fn extend_from_slice(&mut self, slice: &[ComplexI8]) {
+        assert!(self.remaining_capacity() >= slice.len());
+        let slice = unsafe {
+            core::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 2)
+        };
+        self.buf.extend_from_slice(slice);
+    }
+
+    /// Push a value onto the buffer.
+    /// 
+    /// # Panics
+    /// - if there is no space left in the buffer.
+    pub fn push(&mut self, val: ComplexI8) {
+        assert!(self.remaining_capacity() > 0);
+        let slice: &[u8;2] = unsafe { &*((&val) as *const ComplexI8 as *const [u8;2]) };
+        self.buf.extend_from_slice(slice);
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.buf
+    }
+
+    /// Get the samples in the buffer.
+    pub fn samples(&self) -> &[ComplexI8] {
+        let buf: &[u8] = &self.buf;
+        // SAFETY: the buffer is aligned because `ComplexI8` has an alignment of
+        // 1, same as a byte buffer, the data is valid, and we truncate to only
+        // valid populated pairs. Also we shouldn't ever have a byte buffer that
+        // isn't an even number of bytes anyway...
+        unsafe {
+            core::slice::from_raw_parts(
+                buf.as_ptr() as *const ComplexI8,
+                self.buf.len() / core::mem::size_of::<ComplexI8>(),
+            )
+        }
+    }
+
+    /// Mutably get the samples in the buffer.
+    pub fn samples_mut(&mut self) -> &mut [ComplexI8] {
+        let buf: &mut [u8] = &mut self.buf;
+        // SAFETY: the buffer is aligned because `ComplexI8` has an alignment of
+        // 1, same as a byte buffer, the data is valid, and we truncate to only
+        // valid populated pairs. Also we shouldn't ever have a byte buffer that
+        // isn't an even number of bytes anyway...
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                buf.as_mut_ptr() as *mut ComplexI8,
+                self.buf.len() / core::mem::size_of::<ComplexI8>(),
+            )
+        }
+    }
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        let inner = core::mem::take(&mut self.buf);
+        let _ = self.pool.send(inner);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct BiasTSetting {
@@ -196,7 +303,6 @@ pub fn open_hackrf() -> Result<HackRf, std::io::Error> {
 }
 
 impl HackRf {
-
     fn api_check(&self, needed: u16) -> Result<(), Error> {
         if self.version < needed {
             Err(Error::ApiVersion {
@@ -553,17 +659,21 @@ impl HackRf {
     ) -> Result<(), Error> {
         self.api_check(0x0105)?;
         if address > 7 {
-            return Err(Error::InvalidParameter);
+            return Err(Error::InvalidParameter("Operacake address is out of range"));
         }
         match setting {
             OperacakeMode::Manual { a, b } => {
                 let a = *a as u16;
                 let b = *b as u16;
                 if a > 7 || b > 7 {
-                    return Err(Error::InvalidParameter);
+                    return Err(Error::InvalidParameter(
+                        "One or more port numbers is out of range (0-7)",
+                    ));
                 }
                 if (a < 4 && b < 4) || (a >= 4 && b >= 4) {
-                    return Err(Error::InvalidParameter);
+                    return Err(Error::InvalidParameter(
+                        "A0 & B0 ports are using same quad of multiplexed ports",
+                    ));
                 }
                 self.write_u8(ControlRequest::OperacakeSetMode, 0, address)
                     .await?;
@@ -573,12 +683,16 @@ impl HackRf {
             OperacakeMode::Frequency(f) => {
                 let freqs = f.as_slice();
                 if freqs.len() > 8 {
-                    return Err(Error::InvalidParameter);
+                    return Err(Error::InvalidParameter(
+                        "Operacake can only support 8 frequency bands max",
+                    ));
                 }
                 let mut data = Vec::with_capacity(5 * freqs.len());
                 for f in freqs {
                     if f.port > 7 {
-                        return Err(Error::InvalidParameter);
+                        return Err(Error::InvalidParameter(
+                            "Operacake frequency band port selection is out of range",
+                        ));
                     }
                     data.push((f.min >> 8) as u8);
                     data.push((f.min & 0xFF) as u8);
@@ -595,12 +709,16 @@ impl HackRf {
             OperacakeMode::Time(t) => {
                 let times = t.as_slice();
                 if times.len() > 16 {
-                    return Err(Error::InvalidParameter);
+                    return Err(Error::InvalidParameter(
+                        "Operacake can only support 16 time slices max",
+                    ));
                 }
                 let mut data = Vec::with_capacity(5 * times.len());
                 for t in times {
                     if t.port > 7 {
-                        return Err(Error::InvalidParameter);
+                        return Err(Error::InvalidParameter(
+                            "Operacake time slice port selection is out of range",
+                        ));
                     }
                     data.extend_from_slice(&t.dwell.to_le_bytes());
                     data.push(t.port);
@@ -632,7 +750,7 @@ impl HackRf {
     pub async fn operacake_gpio_test(&self, address: u8) -> Result<u16, Error> {
         self.api_check(0x0103)?;
         if address > 7 {
-            return Err(Error::InvalidParameter);
+            return Err(Error::InvalidParameter("Operacake address is out of range"));
         }
         let ret = self
             .interface
@@ -668,16 +786,31 @@ impl HackRf {
             .await
     }
 
-    pub async fn start_rx(self, transfer_size: usize) -> Result<Receive, (HackRf, Error)> {
+    /// Start receiving data.
+    pub async fn start_rx(self, transfer_size: usize) -> Result<Receive, StateChangeError> {
         Receive::new(self, transfer_size).await
     }
 
-    pub async fn start_rx_sweep(&self) -> Result<(), Error> {
-        todo!("Start RX Sweep")
+    /// Start a RX sweep, which will also set the sample rate and baseband filter.
+    pub async fn start_rx_sweep(self, params: &SweepParams) -> Result<Sweep, StateChangeError> {
+        Sweep::new(self, params).await
+    }
+
+    /// Start a RX sweep, but don't set up the sample rate and baseband filter before starting.
+    pub async fn start_rx_sweep_custom_sample_rate(
+        self,
+        params: &SweepParams,
+    ) -> Result<Sweep, StateChangeError> {
+        Sweep::new_with_custom_sample_rate(self, params).await
     }
 
     pub async fn start_tx(&self) -> Result<(), Error> {
-        todo!("Start TX Sweep")
+        todo!("Start TX")
+    }
+
+    /// Try and turn the HackRF to the off state, regardless of what mode it is currently in.
+    pub async fn turn_off(&self) -> Result<(), Error> {
+        self.set_transceiver_mode(TransceiverMode::Off).await
     }
 }
 
