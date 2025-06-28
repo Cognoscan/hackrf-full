@@ -25,7 +25,7 @@ pub enum Error {
 }
 
 /// An error from trying to change HackRF states and failing.
-/// 
+///
 /// Always contains the HackRF instance, but in an unknown state. To try and
 /// return to a known state, try calling [`HackRf::turn_off`].
 pub struct StateChangeError {

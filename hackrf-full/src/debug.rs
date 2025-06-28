@@ -127,20 +127,25 @@ impl<'a> Debug<'a> {
     /// Get the checksum of the CPLD bitstream.
     pub async fn cpld_checksum(&self) -> Result<u32, Error> {
         self.inner.api_check(0x0103)?;
-        let ret = self.inner.read_bytes(ControlRequest::CpldChecksum, 4).await?;
+        let ret = self
+            .inner
+            .read_bytes(ControlRequest::CpldChecksum, 4)
+            .await?;
         let ret: [u8; 4] = ret.as_slice().try_into().map_err(|_| Error::ReturnData)?;
         Ok(u32::from_le_bytes(ret))
     }
 
     /// Read a register from the SI5351C.
     pub async fn si5351c_read(&self, register: u8) -> Result<u8, Error> {
-        self.inner.read_u8(ControlRequest::Si5351cRead, register as u16)
+        self.inner
+            .read_u8(ControlRequest::Si5351cRead, register as u16)
             .await
     }
 
     /// Write a register to the SI5351C.
     pub async fn si5351c_write(&self, register: u8, value: u8) -> Result<(), Error> {
-        self.inner.write_u8(ControlRequest::Si5351cWrite, register as u16, value)
+        self.inner
+            .write_u8(ControlRequest::Si5351cWrite, register as u16, value)
             .await
     }
 
@@ -153,7 +158,8 @@ impl<'a> Debug<'a> {
             });
         }
 
-        self.inner.read_u16(ControlRequest::Rffc5071Read, register as u16)
+        self.inner
+            .read_u16(ControlRequest::Rffc5071Read, register as u16)
             .await
     }
 
@@ -166,7 +172,8 @@ impl<'a> Debug<'a> {
             });
         }
 
-        self.inner.write_u16(ControlRequest::Rffc5071Write, register as u16, value)
+        self.inner
+            .write_u16(ControlRequest::Rffc5071Write, register as u16, value)
             .await
     }
 
@@ -179,7 +186,8 @@ impl<'a> Debug<'a> {
             });
         }
 
-        self.inner.read_u16(ControlRequest::Max2837Read, register as u16)
+        self.inner
+            .read_u16(ControlRequest::Max2837Read, register as u16)
             .await
     }
 
@@ -202,11 +210,10 @@ impl<'a> Debug<'a> {
             });
         }
 
-        self.inner.write_u16(ControlRequest::Max2837Write, register as u16, value)
+        self.inner
+            .write_u16(ControlRequest::Max2837Write, register as u16, value)
             .await
     }
-
-
 }
 
 /// Accessor for the W25Q80BV SPI Flash in the HackRF.
@@ -277,9 +284,9 @@ impl SpiFlash<'_> {
     }
 
     /// Read from the flash memory.
-    /// 
+    ///
     /// This should only be used for firmware verification.
-    /// 
+    ///
     /// Reads can be up to the max size of the memory; this command will split
     /// them into sub-commands if needed.
     pub async fn read(&self, addr: u32, len: usize) -> Result<Vec<u8>, Error> {

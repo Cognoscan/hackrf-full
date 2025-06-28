@@ -3,7 +3,9 @@ use std::sync::mpsc;
 use nusb::transfer::{ControlOut, ControlType, Recipient, RequestBuffer};
 
 use crate::{
-    consts::{ControlRequest, TransceiverMode}, error::StateChangeError, Buffer, Error, HackRf
+    Buffer, Error, HackRf,
+    consts::{ControlRequest, TransceiverMode},
+    error::StateChangeError,
 };
 
 /// Configuration settings for a receive sweep across multiple frequencies.
