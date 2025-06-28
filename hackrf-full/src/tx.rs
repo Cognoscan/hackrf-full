@@ -54,7 +54,11 @@ impl Transmit {
     ///
     /// The buffer pool will grow so long as completed buffers aren't dropped.
     pub fn submit(&mut self, tx: Buffer) {
-        self.queue.submit(tx.into_vec());
+        let mut tx = tx.into_vec();
+        // Round up to nearest 512-byte block and zero-fill remaining
+        let new_len = (tx.len() + 0x1ff) & !0x1ff;
+        tx.resize(new_len, 0);
+        self.queue.submit(tx);
     }
 
     /// Wait for a transmit operation to complete

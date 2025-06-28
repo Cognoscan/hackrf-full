@@ -19,6 +19,8 @@ pub use rx::Receive;
 use std::sync::mpsc;
 pub use sweep::{Sweep, SweepBuf, SweepParams};
 
+use crate::tx::Transmit;
+
 pub type ComplexI8 = num_complex::Complex<i8>;
 
 /// A Buffer holding USB transfer data.
@@ -811,8 +813,9 @@ impl HackRf {
         Sweep::new_with_custom_sample_rate(self, params).await
     }
 
-    pub async fn start_tx(&self) -> Result<(), Error> {
-        todo!("Start TX")
+    /// Start transmitting data.
+    pub async fn start_tx(self, max_transfer_size: usize) -> Result<Transmit, StateChangeError> {
+        Transmit::new(self, max_transfer_size).await
     }
 
     /// Try and turn the HackRF to the off state, regardless of what mode it is currently in.
