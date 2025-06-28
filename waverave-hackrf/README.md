@@ -1,4 +1,4 @@
-# `hackrf-full`
+# `waverave-hackrf`
 
 This is a complete reimplementation of [`libhackrf`][gsg-hackrf] in Rust. It 
 reproduces *all* functions from the original library, and uses [`nusb`][nusb] as 

@@ -1,0 +1,13 @@
+[dependencies]
+
+[package]
+authors = ["Scott Teal <scott@teals.org>"]
+description = "Future crate umbrella for all waverave crates"
+edition = "2024"
+homepage = "https://github.com/Cognoscan/waverave"
+license = "MIT OR Apache-2.0"
+name = "waverave"
+readme = "README.md"
+repository = "https://github.com/Cognoscan/waverave"
+version = "0.0.1"
+
