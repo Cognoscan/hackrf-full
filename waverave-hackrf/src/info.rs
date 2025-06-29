@@ -1,8 +1,47 @@
+//! Get information about a HackRF board.
+//!
+//! This module contains the [`Info`] struct for accessing information from the
+//! HackRF, which can be used to get:
+//!
+//! - The MCU's [serial number][SerialNumber] with [Info::serial].
+//! - The ["compatible" platforms][SupportedPlatform] for a given board, with [Info::supported_platform]
+//! - The [board identifier][BoardId], with [Info::board_id]
+//! - The [board revision][BoardRev], with [Info::board_rev]
+//!
+//! The general way to do this with a HackRF is:
+//!
+//! ```no_run
+//!
+//! # use anyhow::Result;
+//! # #[tokio::main]
+//! # async fn main() -> Result<()> {
+//!
+//! use waverave_hackrf::info::*;
+//!
+//! let hackrf = waverave_hackrf::open_hackrf()?;
+//! let info = hackrf.info();
+//!
+//! let serial: SerialNumber = info.serial().await?;
+//! let compatible: SupportedPlatform = info.supported_platform().await?;
+//! let board_id: BoardId = info.board_id().await?;
+//! let board_rev: BoardRev = info.board_rev().await?;
+//!
+//! # Ok(())
+//! # }
+//! ```
 use crate::{Error, HackRf, HackRfType, consts::ControlRequest};
 
 /// The MCU serial number.
 ///
-/// See the LPC43xx documentation for details.
+/// The Part ID identifies the exact LPC43xx part that was populated. See the
+/// user manual for the exact decoding, but you're likely to find `0xa000cb3c`
+/// for `part_id[0]`.
+///
+/// The "serial number" is referred to as the device unique ID in the user
+/// manual for the LPC43x. It seems that only the last two 32-bit words are
+/// nonzero, though this isn't guaranteed.
+///
+/// See the LPC43xx documentation for full details.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct SerialNumber {
@@ -22,6 +61,8 @@ impl SerialNumber {
 }
 
 /// The board revision.
+///
+/// The Great Scott Gadgets official board revisions are prefixed with "Gsg".
 #[derive(Clone, Copy, Debug)]
 pub enum BoardRev {
     Old,
@@ -58,6 +99,12 @@ impl std::fmt::Display for BoardRev {
 }
 
 impl BoardRev {
+    /// Check if this is marked as an official Great Scott Gadgets board.
+    pub fn is_official(&self) -> bool {
+        use BoardRev::*;
+        matches!(self, GsgR6 | GsgR7 | GsgR8 | GsgR9 | GsgR10)
+    }
+
     fn from_u8(v: u8) -> Self {
         use BoardRev::*;
         match v {
@@ -77,7 +124,8 @@ impl BoardRev {
     }
 }
 
-/// The physical board's identifier.
+/// The physical board's identifier. These differentiate between board hardware
+/// that's actually different.
 #[derive(Clone, Copy, Debug)]
 pub enum BoardId {
     Jellybean,
@@ -153,17 +201,19 @@ impl<'a> Info<'a> {
         self.inner.version
     }
 
-    /// Get the type of HackRF radio.
+    /// Get the [type][HackRfType] of HackRF radio.
     pub fn radio_type(&self) -> HackRfType {
         self.inner.ty
     }
 
-    pub async fn board_id_read(&self) -> Result<BoardId, Error> {
+    /// Get the [board hardware ID][BoardId].
+    pub async fn board_id(&self) -> Result<BoardId, Error> {
         let ret = self.inner.read_u8(ControlRequest::BoardIdRead, 0).await?;
         Ok(BoardId::from_u8(ret))
     }
 
-    pub async fn version_string_read(&self) -> Result<String, Error> {
+    /// Get the firmware version as a string.
+    pub async fn version_string(&self) -> Result<String, Error> {
         let resp = self
             .inner
             .read_bytes(ControlRequest::VersionStringRead, 255)
@@ -171,7 +221,13 @@ impl<'a> Info<'a> {
         String::from_utf8(resp).map_err(|_| Error::ReturnData)
     }
 
-    pub async fn read_serial(&self) -> Result<SerialNumber, Error> {
+    /// Get the MCU's serial numbers.
+    ///
+    /// In the LP43xx documentation, this refers to the device unique ID and the
+    /// part identification number.
+    ///
+    /// See [`SerialNumber`] for more info.
+    pub async fn serial(&self) -> Result<SerialNumber, Error> {
         let mut v: SerialNumber = self
             .inner
             .read_struct(ControlRequest::BoardPartidSerialnoRead)
@@ -180,17 +236,19 @@ impl<'a> Info<'a> {
         Ok(v)
     }
 
+    /// Read the board's [revision number][BoardRev].
     ///
     /// Requires API version 0x0106 or higher.
-    pub async fn rev_read(&self) -> Result<BoardRev, Error> {
+    pub async fn board_rev(&self) -> Result<BoardRev, Error> {
         self.inner.api_check(0x0106)?;
         let rev = self.inner.read_u8(ControlRequest::BoardRevRead, 0).await?;
         Ok(BoardRev::from_u8(rev))
     }
 
+    /// Read the platforms [compatible][SupportedPlatform] with this board.
     ///
     /// Requires API version 0x0106 or higher.
-    pub async fn supported_platform_read(&self) -> Result<SupportedPlatform, Error> {
+    pub async fn supported_platform(&self) -> Result<SupportedPlatform, Error> {
         self.inner.api_check(0x0106)?;
         let ret = self
             .inner

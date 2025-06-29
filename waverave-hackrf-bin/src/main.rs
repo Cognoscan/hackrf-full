@@ -8,8 +8,8 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use color_eyre::eyre::Context;
-use waverave_hackrf::{Buffer, HackRf, SweepBuf, SweepParams};
 use tokio::io::AsyncWriteExt;
+use waverave_hackrf::{Buffer, HackRf, SweepBuf, SweepParams};
 
 #[derive(Clone, Debug)]
 struct AllInfo {
@@ -44,11 +44,11 @@ impl InfoCmd {
         let info = rf.info();
         let api = info.api_version();
         let radio_type = info.radio_type();
-        let id = info.board_id_read().await?;
-        let serial = info.read_serial().await?;
-        let rev = info.rev_read().await?;
-        let version_string = info.version_string_read().await?;
-        let platform = info.supported_platform_read().await?;
+        let id = info.board_id().await?;
+        let serial = info.serial().await?;
+        let rev = info.board_rev().await?;
+        let version_string = info.version_string().await?;
+        let platform = info.supported_platform().await?;
 
         let info = AllInfo {
             api,
@@ -259,7 +259,8 @@ impl RxCmd {
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let args = Cli::parse();
-    let rf = waverave_hackrf::open_hackrf().wrap_err_with(|| String::from("Failed to open HackRF"))?;
+    let rf =
+        waverave_hackrf::open_hackrf().wrap_err_with(|| String::from("Failed to open HackRF"))?;
     match args.command {
         Commands::Info(c) => c.cmd(rf).await,
         Commands::Sweep(c) => c.cmd(rf).await,

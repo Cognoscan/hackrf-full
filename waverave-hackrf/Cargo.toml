@@ -16,3 +16,13 @@ nusb = "0.1"
 thiserror = "2"
 bytemuck = { version = "1", features = ["derive"] }
 num-complex = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "signal",
+    "sync",
+] }
+anyhow = "1"
+
