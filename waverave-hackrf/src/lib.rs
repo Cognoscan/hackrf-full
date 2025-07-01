@@ -1,9 +1,11 @@
 /*!
 
 This is a complete, strongly-asynchronous host crate for the [HackRF][hackrf],
-made using the pure-rust [`nusb`] crate for USB interfacing.
+made using the pure-rust [`nusb`] crate for USB interfacing. It reproduces *all* 
+the functionality of the original [`libhackrf`][libhackrf] library.
 
 [hackrf]: https://greatscottgadgets.com/hackrf/one/
+[libhackrf]: https://github.com/greatscottgadgets/hackrf/tree/master/host
 
 The standard entry point for this library is [`open_hackrf()`], which will open
 the first available HackRF device.
