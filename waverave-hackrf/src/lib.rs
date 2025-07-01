@@ -22,9 +22,9 @@ If a mode change error occurs, the [`HackRf`] struct is returned alongside the
 error, and it can potentially be reset back to the off state by running
 [`HackRf::turn_off`].
 
-As for what this actually looks like in practice, here's an example program that
-configures the system, enters receive mode, and processes samples to estimate
-the average received power relative to full scale:
+As for what using this library looks like in practice, here's an example program
+that configures the system, enters receive mode, and processes samples to
+estimate the average received power relative to full scale:
 
 ```no_run
 use anyhow::Result;
@@ -51,15 +51,10 @@ async fn main() -> Result<()> {
     let mut pow_sum = 0.0;
     while hackrf_rx.pending() > 0 {
         let buf = hackrf_rx.next_complete().await?;
-        for x in buf.samples().chunks(1024) {
-            // Sum in blocks to lower the scale difference between the individual values and the overall sum.
-            let mut pow_sum_inner = 0.0;
-            for y in x.iter() {
-                let re = y.re as f64;
-                let im = y.im as f64;
-                pow_sum_inner += re * re + im * im;
-            }
-            pow_sum += pow_sum_inner;
+        for x in buf.samples() {
+            let re = x.re as f64;
+            let im = x.im as f64;
+            pow_sum += re * re + im * im;
         }
         count += buf.len();
     }
@@ -72,6 +67,7 @@ async fn main() -> Result<()> {
     println!("Average Power = {average_power} dbFS");
     Ok(())
 }
+
 ```
 
 */
