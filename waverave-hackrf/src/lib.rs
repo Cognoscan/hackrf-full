@@ -11,7 +11,7 @@ The standard entry point for this library is [`open_hackrf()`], which will open
 the first available HackRF device.
 
 Getting started is easy: open up a HackRF peripheral, configure it as needed,
-and enter into transmit, receive, or RX sweep mode. Changing the oeprating mode
+and enter into transmit, receive, or RX sweep mode. Changing the operating mode
 also changes the struct used, i.e. it uses the typestate pattern. The different
 states and their corresponding structs are:
 
