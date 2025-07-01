@@ -13,7 +13,7 @@ description = "Utilities for working with the HackRF SDR"
 
 
 [dependencies]
-waverave-hackrf = { version = "0.0.2", path = "../waverave-hackrf" }
+waverave-hackrf = { version = "0.1.0", path = "../waverave-hackrf" }
 color-eyre = "0.6"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = [
