@@ -42,6 +42,7 @@ use crate::{Error, HackRf, HackRfType, consts::ControlRequest};
 /// nonzero, though this isn't guaranteed.
 ///
 /// See the LPC43xx documentation for full details.
+#[allow(missing_docs)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct SerialNumber {
@@ -63,6 +64,7 @@ impl SerialNumber {
 /// The board revision.
 ///
 /// The Great Scott Gadgets official board revisions are prefixed with "Gsg".
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub enum BoardRev {
     Old,
@@ -126,6 +128,7 @@ impl BoardRev {
 
 /// The physical board's identifier. These differentiate between board hardware
 /// that's actually different.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub enum BoardId {
     Jellybean,
@@ -164,6 +167,7 @@ impl BoardId {
 }
 
 /// Compatible platforms for this board.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub struct SupportedPlatform {
     pub jawbreaker: bool,

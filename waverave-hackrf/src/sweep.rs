@@ -42,6 +42,10 @@ pub struct SweepParams {
 }
 
 impl SweepParams {
+    /// Initialize the sweep parameters with some sane defaults, given a sample
+    /// rate.
+    ///
+    /// See the [main `SweepParams` documentation][SweepParams] for more info.
     pub fn init_sample_rate(sample_rate_hz: u32) -> Self {
         let filter_bw = baseband_filter_bw(sample_rate_hz * 3 / 4);
         let offset_hz = filter_bw / 2;
@@ -76,21 +80,25 @@ pub enum SweepMode {
 
 const SWEEP_BUF_SIZE: usize = 16384;
 
+/// A block of samples retrieved for some tuning frequency within the sweep.
 pub struct SweepBuf {
     freq_hz: u64,
     buf: Buffer,
 }
 
 impl SweepBuf {
+    /// The frequency tuned to, without the offset added in.
     pub fn freq_hz(&self) -> u64 {
         self.freq_hz
     }
 
+    /// Access the retrieved samples in this tuning block.
     pub fn samples(&self) -> &[num_complex::Complex<i8>] {
         // We checked this range would be valid when we made SweepBuf.
         unsafe { self.buf.samples().get_unchecked(5..) }
     }
 
+    /// Mutably access the retrieved samples in this tuning block.
     pub fn samples_mut(&mut self) -> &mut [num_complex::Complex<i8>] {
         // We checked this range would be valid when we made SweepBuf.
         unsafe { self.buf.samples_mut().get_unchecked_mut(5..) }

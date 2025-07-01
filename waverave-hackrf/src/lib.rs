@@ -151,7 +151,7 @@ impl Buffer {
         (self.buf.capacity() & !0x1FF) / size_of::<ComplexI8>()
     }
 
-    //// Clear out the buffer's samples.
+    /// Clear out the buffer's samples.
     pub fn clear(&mut self) {
         self.buf.clear();
     }
@@ -283,6 +283,7 @@ pub struct BiasTSetting {
 /// A Bias-T setting change to apply on a mode change.
 ///
 /// See [`BiasTSetting`] for where to use this.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BiasTMode {
     NoChange,
@@ -338,6 +339,7 @@ impl std::fmt::Display for RfPathFilter {
 /// Use when calling [`HackRf::operacake_set_mode`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
+#[allow(missing_docs)]
 pub enum OperacakeMode {
     Manual = 0,
     Frequency = 1,
@@ -401,6 +403,7 @@ pub struct HackRfDescriptor {
 }
 
 /// The type of HackRF device that was detected.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HackRfType {
     Jawbreaker,
