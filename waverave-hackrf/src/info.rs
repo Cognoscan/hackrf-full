@@ -93,7 +93,7 @@ impl std::fmt::Display for BoardRev {
             Self::GsgR8 => f.write_str("Great Scott Gadgets r8"),
             Self::GsgR9 => f.write_str("Great Scott Gadgets r9"),
             Self::GsgR10 => f.write_str("Great Scott Gadgets r10"),
-            Self::Unknown(v) => write!(f, "unknown (0x{:x})", v),
+            Self::Unknown(v) => write!(f, "unknown (0x{v:x})"),
         }
     }
 }
@@ -144,7 +144,7 @@ impl std::fmt::Display for BoardId {
             Self::HackRf1Og => f.write_str("HackRF One"),
             Self::Rad1o => f.write_str("rad1o"),
             Self::HackRf1R9 => f.write_str("HackRF One Rev9"),
-            Self::Unknown(v) => write!(f, "Unknown (0x{:x})", v),
+            Self::Unknown(v) => write!(f, "Unknown (0x{v:x})"),
         }
     }
 }

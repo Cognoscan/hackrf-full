@@ -1,4 +1,82 @@
-#![allow(dead_code)]
+/*!
+
+This is a complete, strongly-asynchronous host crate for the [HackRF][hackrf],
+made using the pure-rust [`nusb`] crate for USB interfacing.
+
+[hackrf]: https://greatscottgadgets.com/hackrf/one/
+
+The standard entry point for this library is [`open_hackrf()`], which will open
+the first available HackRF device.
+
+Getting started is easy: open up a HackRF peripheral, configure it as needed,
+and enter into transmit, receive, or RX sweep mode. Changing the oeprating mode
+also changes the struct used, i.e. it uses the typestate pattern. The different
+states and their corresponding structs are:
+
+- [`HackRf`] - The default, off, state.
+- [`Receive`] - Receiving RF signals.
+- [`Transmit`] - Transmitting RF signals.
+- [`Sweep`] - Running a receive sweep through multiple tuning frequencies.
+
+If a mode change error occurs, the [`HackRf`] struct is returned alongside the
+error, and it can potentially be reset back to the off state by running
+[`HackRf::turn_off`].
+
+As for what this actually looks like in practice, here's an example program that
+configures the system, enters receive mode, and processes samples to estimate
+the average received power relative to full scale:
+
+```no_run
+use anyhow::Result;
+#[tokio::main]
+async fn main() -> Result<()> {
+    let hackrf = waverave_hackrf::open_hackrf()?;
+
+    // Configure: 20MHz sample rate, turn on the RF amp, set IF & BB gains to 16 dB,
+    // and tune to 915 MHz.
+    hackrf.set_sample_rate(20e6).await?;
+    hackrf.set_amp_enable(true).await?;
+    hackrf.set_lna_gain(16).await?;
+    hackrf.set_vga_gain(16).await?;
+    hackrf.set_freq(915_000_000).await?;
+
+    // Start receiving, in bursts of 16384 samples
+    let mut hackrf_rx = hackrf.start_rx(16384).await.map_err(|e| e.err)?;
+
+    // Queue up 64 transfers, retrieve them, and measure average power.
+    for _ in 0..64 {
+        hackrf_rx.submit();
+    }
+    let mut count = 0;
+    let mut pow_sum = 0.0;
+    while hackrf_rx.pending() > 0 {
+        let buf = hackrf_rx.next_complete().await?;
+        for x in buf.samples().chunks(1024) {
+            // Sum in blocks to lower the scale difference between the individual values and the overall sum.
+            let mut pow_sum_inner = 0.0;
+            for y in x.iter() {
+                let re = y.re as f64;
+                let im = y.im as f64;
+                pow_sum_inner += re * re + im * im;
+            }
+            pow_sum += pow_sum_inner;
+        }
+        count += buf.len();
+    }
+
+    // Stop receiving
+    hackrf_rx.stop().await?;
+
+    // Print out our measurement
+    let average_power = (pow_sum / (count as f64 * 127.0 * 127.0)).log10() * 10.;
+    println!("Average Power = {average_power} dbFS");
+    Ok(())
+}
+```
+
+*/
+
+#![warn(missing_docs)]
 
 mod consts;
 pub mod debug;
@@ -10,6 +88,7 @@ mod tx;
 use std::ops::Range;
 
 use bytemuck::Pod;
+use core::mem::size_of;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use std::sync::mpsc;
 
@@ -19,7 +98,7 @@ use crate::info::Info;
 
 pub use crate::error::{Error, StateChangeError};
 pub use crate::rx::Receive;
-pub use crate::sweep::{Sweep, SweepBuf, SweepParams};
+pub use crate::sweep::{Sweep, SweepBuf, SweepMode, SweepParams};
 pub use crate::tx::Transmit;
 
 /// Complex 8-bit signed data, as used by the HackRF.
@@ -69,7 +148,7 @@ impl Buffer {
     pub fn capacity(&self) -> usize {
         // Force down to the nearest 512-byte boundary, which is the transfer
         // size the HackRF requires.
-        (self.buf.capacity() & !0x1FF) / core::mem::size_of::<ComplexI8>()
+        (self.buf.capacity() & !0x1FF) / size_of::<ComplexI8>()
     }
 
     //// Clear out the buffer's samples.
@@ -79,7 +158,7 @@ impl Buffer {
 
     /// Size of the buffer, in samples.
     pub fn len(&self) -> usize {
-        self.buf.len() / core::mem::size_of::<ComplexI8>()
+        self.buf.len() / size_of::<ComplexI8>()
     }
 
     /// Returns true if there are no samples in the buffer.
@@ -92,21 +171,46 @@ impl Buffer {
         self.capacity() - self.len()
     }
 
+    /// Extend the buffer with some number of samples set to 0, and get a
+    /// mutable slice to the newly initialized samples.
+    ///
+    /// # Panics
+    /// - If there is not enough space left for the added samples.
+    pub fn extend_zeros(&mut self, len: usize) -> &mut [ComplexI8] {
+        assert!(self.remaining_capacity() >= len);
+        let old_len = self.buf.len();
+        let new_len = old_len + len * size_of::<ComplexI8>();
+        self.buf.resize(new_len, 0);
+        let buf: &mut [u8] = &mut self.buf;
+        // SAFETY: We only ever resize according to the size of a ComplexI8,
+        // the buffer always holds ComplexI8 internally, and ComplexI8 has an
+        // alignment of 1.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                buf.as_mut_ptr().add(old_len) as *mut ComplexI8,
+                len / size_of::<ComplexI8>(),
+            )
+        }
+    }
+
     /// Extend the buffer with a slice of samples.
     ///
     /// # Panics
-    /// - if there is no space left in the buffer for the slice.
+    /// - If there is no space left in the buffer for the slice.
     pub fn extend_from_slice(&mut self, slice: &[ComplexI8]) {
         assert!(self.remaining_capacity() >= slice.len());
-        let slice =
-            unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 2) };
+        // SAFETY: We can always cast a ComplexI8 to bytes, as it meets all the
+        // "plain old data" requirements.
+        let slice = unsafe {
+            core::slice::from_raw_parts(slice.as_ptr() as *const u8, core::mem::size_of_val(slice))
+        };
         self.buf.extend_from_slice(slice);
     }
 
     /// Push a value onto the buffer.
     ///
     /// # Panics
-    /// - if there is no space left in the buffer.
+    /// - If there is no space left in the buffer.
     pub fn push(&mut self, val: ComplexI8) {
         assert!(self.remaining_capacity() > 0);
         let slice: &[u8; 2] = unsafe { &*((&val) as *const ComplexI8 as *const [u8; 2]) };
@@ -133,7 +237,7 @@ impl Buffer {
         unsafe {
             core::slice::from_raw_parts(
                 buf.as_ptr() as *const ComplexI8,
-                self.buf.len() / core::mem::size_of::<ComplexI8>(),
+                self.buf.len() / size_of::<ComplexI8>(),
             )
         }
     }
@@ -148,7 +252,7 @@ impl Buffer {
         unsafe {
             core::slice::from_raw_parts_mut(
                 buf.as_mut_ptr() as *mut ComplexI8,
-                self.buf.len() / core::mem::size_of::<ComplexI8>(),
+                self.buf.len() / size_of::<ComplexI8>(),
             )
         }
     }
@@ -231,7 +335,7 @@ impl std::fmt::Display for RfPathFilter {
 /// - Time: the switches change after some number of samples have been
 ///   sent/received.
 ///
-/// Use when calling [`HackRf::operacake_config`].
+/// Use when calling [`HackRf::operacake_set_mode`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum OperacakeMode {
@@ -242,6 +346,19 @@ pub enum OperacakeMode {
 
 /// A Frequency band allocated to a specific port for all Operacakes operating
 /// in frequency mode.
+///
+/// This is used in [`HackRf::operacake_config_freq`].
+///
+/// Ports are zero-indexed, but can also be referred to with the top-level
+/// constants:
+/// - PORT_A1 = 0
+/// - PORT_A2 = 1
+/// - PORT_A3 = 2
+/// - PORT_A4 = 3
+/// - PORT_B1 = 4
+/// - PORT_B2 = 5
+/// - PORT_B3 = 6
+/// - PORT_B4 = 7
 #[derive(Clone, Copy, Debug)]
 pub struct OperacakeFreq {
     /// Start frequency, in MHz.
@@ -255,15 +372,18 @@ pub struct OperacakeFreq {
 /// A dwell time allocated to a specific port for all Operacakes operating in
 /// dwell time mode.
 ///
-/// Ports are zero-indexed:
-/// - A1 = 0
-/// - A2 = 1
-/// - A3 = 2
-/// - A4 = 3
-/// - B1 = 4
-/// - B2 = 5
-/// - B3 = 6
-/// - B4 = 7
+/// This is used in [`HackRf::operacake_config_time`].
+///
+/// Ports are zero-indexed, but can also be referred to with the top-level
+/// constants:
+/// - PORT_A1 = 0
+/// - PORT_A2 = 1
+/// - PORT_A3 = 2
+/// - PORT_A4 = 3
+/// - PORT_B1 = 4
+/// - PORT_B2 = 5
+/// - PORT_B3 = 6
+/// - PORT_B4 = 7
 #[derive(Clone, Copy, Debug)]
 pub struct OperacakeDwell {
     /// Dwell time, in number of samples
@@ -272,14 +392,10 @@ pub struct OperacakeDwell {
     pub port: u8,
 }
 
-/// A HackRF device. This is the main struct for talking to the HackRF.
-pub struct HackRf {
-    pub(crate) interface: nusb::Interface,
-    pub(crate) version: u16,
-    pub(crate) ty: HackRfType,
-}
-
 /// A HackRF device descriptor, which can be opened.
+///
+/// These are mostly returned from calling [`list_hackrf_devices`], but can also
+/// be formed by trying to convert a [`nusb::DeviceInfo`] into one.
 pub struct HackRfDescriptor {
     info: nusb::DeviceInfo,
 }
@@ -332,10 +448,25 @@ impl HackRfDescriptor {
         }
         let interface = device.detach_and_claim_interface(0)?;
 
+        let (buf_pool_send, buf_pool) = mpsc::channel();
+        let tx = TxEndpoint {
+            queue: interface.bulk_out_queue(TX_ENDPOINT_ADDRESS),
+            buf_pool,
+            buf_pool_send,
+        };
+        let (buf_pool_send, buf_pool) = mpsc::channel();
+        let rx = RxEndpoint {
+            queue: interface.bulk_in_queue(RX_ENDPOINT_ADDRESS),
+            buf_pool,
+            buf_pool_send,
+        };
+
         Ok(HackRf {
             interface,
             version,
             ty,
+            rx,
+            tx,
         })
     }
 }
@@ -383,6 +514,33 @@ pub fn open_hackrf() -> Result<HackRf, std::io::Error> {
         .next()
         .ok_or_else(|| std::io::Error::other("No HackRF devices"))?
         .open()
+}
+
+/// A HackRF device. This is the main struct for talking to the HackRF.
+///
+/// This provides all the settings to actively configure the HackRF while it is
+/// off, as well as the ability to use debug or info fetching operations with
+/// the [`HackRf::info`] and [`HackRf::debug`] functions. Some of these
+/// operations are also exposed while receiving & transmitting, if it makes
+/// sense to do so.
+pub struct HackRf {
+    pub(crate) interface: nusb::Interface,
+    pub(crate) version: u16,
+    pub(crate) ty: HackRfType,
+    pub(crate) rx: RxEndpoint,
+    pub(crate) tx: TxEndpoint,
+}
+
+struct RxEndpoint {
+    queue: nusb::transfer::Queue<nusb::transfer::RequestBuffer>,
+    buf_pool: mpsc::Receiver<Vec<u8>>,
+    buf_pool_send: mpsc::Sender<Vec<u8>>,
+}
+
+struct TxEndpoint {
+    queue: nusb::transfer::Queue<Vec<u8>>,
+    buf_pool: mpsc::Receiver<Vec<u8>>,
+    buf_pool_send: mpsc::Sender<Vec<u8>>,
 }
 
 impl HackRf {
@@ -500,7 +658,7 @@ impl HackRf {
     where
         T: Pod,
     {
-        let size = core::mem::size_of::<T>();
+        let size = size_of::<T>();
         let mut resp = self.read_bytes(req, size).await?;
         if resp.len() < size {
             return Err(Error::ReturnData);
@@ -747,7 +905,7 @@ impl HackRf {
         let ret = self
             .read_u8(ControlRequest::SetLnaGain, value & (!0x07))
             .await?;
-        if ret != 0 {
+        if ret == 0 {
             return Err(Error::ReturnData);
         }
         Ok(())
@@ -767,9 +925,9 @@ impl HackRf {
         }
 
         let ret = self
-            .read_u8(ControlRequest::SetLnaGain, value & (!0x01))
+            .read_u8(ControlRequest::SetVgaGain, value & (!0x01))
             .await?;
-        if ret != 0 {
+        if ret == 0 {
             return Err(Error::ReturnData);
         }
         Ok(())
@@ -787,8 +945,8 @@ impl HackRf {
             });
         }
 
-        let ret = self.read_u8(ControlRequest::SetLnaGain, value).await?;
-        if ret != 0 {
+        let ret = self.read_u8(ControlRequest::SetTxvgaGain, value).await?;
+        if ret == 0 {
             return Err(Error::ReturnData);
         }
         Ok(())
@@ -1059,6 +1217,14 @@ impl HackRf {
         self.write_u8(ControlRequest::SetLeds, 0, state).await
     }
 
+    /// Set the Bias-Tee behavior.
+    ///
+    /// This function will configure what change, if any, to apply to the
+    /// bias-tee circuit on a mode change. The default is for it to always be
+    /// off, but with a custom config, it can turn on when switching to RX, TX,
+    /// or even to always be on. The settings in `opts` are always applied when
+    /// first changing to that mode, with [`BiasTMode::NoChange`] not changing
+    /// from whatever it is set to before the transition.
     ///
     /// Requires API version 0x0108 or higher.
     pub async fn set_user_bias_t_opts(&self, opts: BiasTSetting) -> Result<(), Error> {
@@ -1069,17 +1235,33 @@ impl HackRf {
             .await
     }
 
-    /// Start receiving data.
+    /// Switch a HackRF into receive mode, getting `transfer_size` samples at a
+    /// time. The transfer size is always rounded up to the nearest 256-sample
+    /// block increment; it's recommended to be 8192 samples but can be smaller
+    /// or larger as needed. If the same size is used repeatedly with
+    /// `start_rx`, buffers won't need to be reallocated.
     pub async fn start_rx(self, transfer_size: usize) -> Result<Receive, StateChangeError> {
         Receive::new(self, transfer_size).await
     }
 
     /// Start a RX sweep, which will also set the sample rate and baseband filter.
+    ///
+    /// Buffers are reused across sweep operations, provided that
+    /// [`HackRf::start_rx`] isn't used, or is used with a 8192 sample buffer
+    /// size.
+    ///
+    /// See [`Sweep`] for more details on the RX sweep mode.
     pub async fn start_rx_sweep(self, params: &SweepParams) -> Result<Sweep, StateChangeError> {
         Sweep::new(self, params).await
     }
 
     /// Start a RX sweep, but don't set up the sample rate and baseband filter before starting.
+    ///
+    /// Buffers are reused across sweep operations, provided that
+    /// [`HackRf::start_rx`] isn't used, or is used with a 8192 sample buffer
+    /// size.
+    ///
+    /// See [`Sweep`] for more details on the RX sweep mode.
     pub async fn start_rx_sweep_custom_sample_rate(
         self,
         params: &SweepParams,
@@ -1087,7 +1269,11 @@ impl HackRf {
         Sweep::new_with_custom_sample_rate(self, params).await
     }
 
-    /// Start transmitting data.
+    /// Switch a HackRF into transmit mode, with a set maximum number of samples
+    /// per buffer block.
+    ///
+    /// Buffers are reused across transmit operations, provided that the
+    /// `max_transfer_size` is always the same.
     pub async fn start_tx(self, max_transfer_size: usize) -> Result<Transmit, StateChangeError> {
         Transmit::new(self, max_transfer_size).await
     }

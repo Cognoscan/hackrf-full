@@ -27,6 +27,8 @@ pub enum ControlRequest {
     SetTxvgaGain = 21,
     AntennaEnable = 23,
     SetFreqExplicit = 24,
+    /// Unknown extra operation, not in libhackrf
+    #[allow(dead_code)]
     UsbWcidVendorReq = 25,
     InitSweep = 26,
     OperacakeGetBoards = 27,
@@ -61,12 +63,10 @@ pub enum TransceiverMode {
     Off = 0,
     Receive = 1,
     Transmit = 2,
+    #[allow(dead_code)]
     Ss = 3,
     CpldUpdate = 4,
     RxSweep = 5,
 }
 
-pub const TRANSFER_COUNT: u8 = 4;
-pub const TRANSFER_BUFFER_SIZE: u32 = 262144;
-pub const DEVICE_BUFFER_SIZE: u32 = 32768;
-pub const USB_MAX_SERIAL_LENGTH: u32 = 32;
+pub const FREQ_MAX_MHZ: u32 = 7250;

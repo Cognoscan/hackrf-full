@@ -114,7 +114,7 @@ impl SweepCmd {
             ctrlc_tx.store(true, atomic::Ordering::Release);
         });
 
-        let mut params = SweepParams::initialize_from_sample_rate(self.sample_rate);
+        let mut params = SweepParams::init_sample_rate(self.sample_rate);
         for f in self.freq.iter() {
             params.freq_mhz.push((f.lo, f.hi));
         }

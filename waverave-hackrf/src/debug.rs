@@ -1,9 +1,49 @@
+/*!
+Debug operations for the HackRF.
+
+The HackRF exposes a number of internal debugging operations through the
+[`Debug`][struct@Debug] struct, allowing for direct read & write of most
+peripheral ICs. This is also how it can be reprogrammed without entering the DFU
+mode.
+
+The way to do this with a HackRF is by calling [`HackRf::debug`] with an open
+peripheral, like so:
+
+```no_run
+
+# use anyhow::Result;
+# #[tokio::main]
+# async fn main() -> Result<()> {
+
+use waverave_hackrf::debug::*;
+
+let mut hackrf = waverave_hackrf::open_hackrf()?;
+// Mutably borrow - make sure no other operations are in progress.
+let mut debug = hackrf.debug();
+
+// Just grab the internal state of the M0 processor and dump it
+let state = debug.get_m0_state().await?;
+dbg!(&state);
+
+# Ok(())
+# }
+```
+
+ */
 use std::ops::Range;
 
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 
 use crate::{ControlRequest, Error, HackRf, TransceiverMode};
 
+/// Internal state data of the Cortex M0 sub-processor.
+///
+/// This can be retrieved with [`Debug::get_m0_state`].
+///
+/// The best use of this struct is that it will show any shortfalls that
+/// occurred during the last TX/RX/Sweep operation, i.e. a TX underrun or RX
+/// overrun.
+///
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct M0State {
@@ -54,6 +94,29 @@ impl M0State {
 /// Debug operations for the HackRF, including programming operations.
 ///
 /// Borrows the interface while doing operations.
+///
+/// The way to get to this struct is by calling [`HackRf::debug`] with an open
+/// peripheral, like so:
+///
+/// ```no_run
+///
+/// # use anyhow::Result;
+/// # #[tokio::main]
+/// # async fn main() -> Result<()> {
+///
+/// use waverave_hackrf::debug::*;
+///
+/// let mut hackrf = waverave_hackrf::open_hackrf()?;
+/// // Mutably borrow - make sure no other operations are in progress.
+/// let mut debug = hackrf.debug();
+///
+/// // Just grab the internal state of the M0 processor and dump it
+/// let state = debug.get_m0_state().await?;
+/// dbg!(&state);
+///
+/// # Ok(())
+/// # }
+/// ```
 pub struct Debug<'a> {
     inner: &'a mut HackRf,
 }
@@ -74,6 +137,8 @@ impl<'a> Debug<'a> {
     }
 
     /// Access the attached SPI flash.
+    ///
+    /// See [`SpiFlash`] for what to do with it.
     pub fn spi_flash(&self) -> SpiFlash<'_> {
         SpiFlash { inner: self.inner }
     }
@@ -91,12 +156,9 @@ impl<'a> Debug<'a> {
         self.inner
             .set_transceiver_mode(TransceiverMode::CpldUpdate)
             .await?;
-        let mut queue = self
-            .inner
-            .interface
-            .bulk_out_queue(crate::consts::TX_ENDPOINT_ADDRESS);
         let mut sent = 0;
         let total = data.len();
+        let queue = &mut self.inner.tx.queue;
         for chunk in data.chunks(CHUNK_SIZE) {
             let mut buf = if queue.pending() != 0 {
                 let resp = queue.next_complete().await.into_result()?;
@@ -219,6 +281,18 @@ impl<'a> Debug<'a> {
 }
 
 /// Accessor for the W25Q80BV SPI Flash in the HackRF.
+///
+/// ⚠️ WARNING: This allows for directly manipulating the SPI flash, which is a
+/// great way to brick your HackRF and require [recovering through DFU mode][dfu].
+///
+/// The general write procedure is to [erase][SpiFlash::erase] the flash,
+/// [write][SpiFlash::write] all bytes to it starting from address 0, then
+/// verify by [reading][SpiFlash::read] the flash to verify a successful write.
+/// As long as you don't depower it after a flash operation, a failed write
+/// attempt can potentially be repeated, as it appears the HackRF only accesses
+/// flash during initial boot and configuration.
+///
+/// [dfu]: https://hackrf.readthedocs.io/en/latest/updating_firmware.html#only-if-necessary-recovering-the-spi-flash-firmware
 pub struct SpiFlash<'a> {
     inner: &'a HackRf,
 }
@@ -236,7 +310,7 @@ impl SpiFlash<'_> {
 
     /// Write firmware to the flash memory.
     ///
-    /// Should only be used for firmware image writing, and likely needs to be
+    /// Should only be used for firmware image writing, and needs to be
     /// preceeded by an erase command before doing a write sequence.
     ///
     /// Writes can be up to the max size of the memory; this command will split
