@@ -118,7 +118,7 @@ impl SweepCmd {
         for f in self.freq.iter() {
             params.freq_mhz.push((f.lo, f.hi));
         }
-        let mut sweep = rf.start_rx_sweep(&params).await?;
+        let mut sweep = rf.start_rx_sweep(&params).await.map_err(|e| e.err)?;
 
         let mut bufs: u64 = 0;
         let mut freq: BTreeMap<u64, u64> = BTreeMap::new();
@@ -179,6 +179,7 @@ impl RxCmd {
         let mut rx = rf
             .start_rx(self.buf_size)
             .await
+            .map_err(|e| e.err)
             .wrap_err("Failed to start RX")?;
 
         let mut total: u64 = 0;
