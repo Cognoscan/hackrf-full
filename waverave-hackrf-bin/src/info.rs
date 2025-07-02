@@ -2,6 +2,7 @@ use clap::Args;
 use color_eyre::eyre::Context;
 use waverave_hackrf::{HackRf, HackRfType, info::*, list_hackrf_devices};
 
+/// Retrieve as much info as possible from each attached HackRF.
 #[derive(Args, Debug)]
 pub struct Cmd {}
 
@@ -100,13 +101,23 @@ impl AllInfo {
 }
 
 impl Cmd {
-    pub async fn cmd(&self) -> color_eyre::Result<()> {
+    pub async fn cmd(&self, filter_serial: Option<String>) -> color_eyre::Result<()> {
         println!("Binary release {}", env!("CARGO_PKG_VERSION"));
+
+        let mut found_hackrf = false;
         for dev in list_hackrf_devices().wrap_err("Couldn't enumerate HackRF devices")? {
             let serial = dev
                 .serial()
                 .map(|s| s.to_owned())
                 .unwrap_or_else(|| String::from("Unknown"));
+
+            if let Some(s) = filter_serial.as_ref() {
+                if s != &serial {
+                    continue;
+                }
+            }
+            found_hackrf = true;
+
             let rf = match dev.open() {
                 Ok(rf) => rf,
                 Err(e) => {
@@ -192,6 +203,14 @@ impl Cmd {
                 }
             } else {
                 println!("Opera Cakes: ❌ Failed to retrieve");
+            }
+        }
+
+        if !found_hackrf {
+            if let Some(serial) = filter_serial {
+                println!("Unable to locate HackRF with serial number {serial}");
+            } else {
+                println!("Couldn't find any HackRF modules");
             }
         }
         Ok(())

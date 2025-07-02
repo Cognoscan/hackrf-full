@@ -7,16 +7,28 @@ use waverave_hackrf::{Buffer, HackRf};
 
 #[derive(Args, Debug)]
 pub struct Cmd {
-    /// Size of transfer buffers. Defaults to 4096.
-    #[arg(short, long, default_value_t = 64)]
+    #[command(flatten)]
+    params: crate::RadioParams,
+    /// Size of transfer buffers, in samples. Defaults to 8192, clamped between
+    /// 256 and 2^17.
+    #[arg(short = 'S', long, default_value_t = 8192)]
     buf_size: usize,
-    /// Number of in-flight sweep buffers allowed. Defaults to 64.
-    #[arg(short, long, default_value_t = 64)]
-    queue_depth: usize,
+
+    /// Record data to a file. Omit for stdout.
+    #[arg(default_value_t)]
+    filename: String,
 }
 
 impl Cmd {
     pub async fn cmd(&self, rf: HackRf) -> color_eyre::Result<()> {
+        let buf_size = self.buf_size.clamp(256, 1 << 17);
+        let queue_depth = ((1 << 19) / buf_size).max(4);
+
+        self.params
+            .configure(&rf)
+            .await
+            .wrap_err("Failed configuring the HackRF")?;
+
         let ctrlc_rx = Arc::new(atomic::AtomicBool::new(false));
         let ctrlc_tx = ctrlc_rx.clone();
         tokio::spawn(async move {
@@ -25,7 +37,7 @@ impl Cmd {
         });
 
         let mut rx = rf
-            .start_rx(self.buf_size)
+            .start_rx(buf_size)
             .await
             .map_err(|e| e.err)
             .wrap_err("Failed to start RX")?;
@@ -65,7 +77,7 @@ impl Cmd {
                         continue;
                     }
                 };
-                if buf.len() < self.buf_size {
+                if buf.len() < buf_size {
                     shortfalls += 1;
                 }
                 let t = buf.len() as u64;
@@ -84,7 +96,7 @@ impl Cmd {
                     break;
                 }
             }
-            while rx.pending() < self.queue_depth {
+            while rx.pending() < queue_depth {
                 rx.submit();
             }
         }
