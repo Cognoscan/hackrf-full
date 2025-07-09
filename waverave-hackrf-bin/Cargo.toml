@@ -1,6 +1,6 @@
 [package]
 name = "waverave-hackrf-bin"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Scott Teal <scott@teals.org>"]
 edition = "2024"
 readme = "README.md"
