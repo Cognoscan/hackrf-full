@@ -1,7 +1,7 @@
 /*!
 
 This is a complete, strongly-asynchronous host crate for the [HackRF][hackrf],
-made using the pure-rust [`nusb`] crate for USB interfacing. It reproduces *all* 
+made using the pure-rust [`nusb`] crate for USB interfacing. It reproduces *all*
 the functionality of the original [`libhackrf`][libhackrf] library.
 
 [hackrf]: https://greatscottgadgets.com/hackrf/one/
@@ -88,7 +88,6 @@ use std::ops::Range;
 use bytemuck::Pod;
 use core::mem::size_of;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
-use std::sync::mpsc;
 
 use crate::consts::*;
 use crate::debug::Debug;
@@ -129,11 +128,11 @@ pub const PORT_B4: u8 = 7;
 /// some platform-specific way of allocating memory for zero-copy USB transfers.
 pub struct Buffer {
     buf: Vec<u8>,
-    pool: mpsc::Sender<Vec<u8>>,
+    pool: crossbeam_channel::Sender<Vec<u8>>,
 }
 
 impl Buffer {
-    pub(crate) fn new(buf: Vec<u8>, pool: mpsc::Sender<Vec<u8>>) -> Self {
+    pub(crate) fn new(buf: Vec<u8>, pool: crossbeam_channel::Sender<Vec<u8>>) -> Self {
         assert!(buf.len() & 0x1FF == 0);
         Self { buf, pool }
     }
@@ -449,13 +448,13 @@ impl HackRfDescriptor {
         }
         let interface = device.detach_and_claim_interface(0)?;
 
-        let (buf_pool_send, buf_pool) = mpsc::channel();
+        let (buf_pool_send, buf_pool) = crossbeam_channel::unbounded();
         let tx = TxEndpoint {
             queue: interface.bulk_out_queue(TX_ENDPOINT_ADDRESS),
             buf_pool,
             buf_pool_send,
         };
-        let (buf_pool_send, buf_pool) = mpsc::channel();
+        let (buf_pool_send, buf_pool) = crossbeam_channel::unbounded();
         let rx = RxEndpoint {
             queue: interface.bulk_in_queue(RX_ENDPOINT_ADDRESS),
             buf_pool,
@@ -534,14 +533,14 @@ pub struct HackRf {
 
 struct RxEndpoint {
     queue: nusb::transfer::Queue<nusb::transfer::RequestBuffer>,
-    buf_pool: mpsc::Receiver<Vec<u8>>,
-    buf_pool_send: mpsc::Sender<Vec<u8>>,
+    buf_pool: crossbeam_channel::Receiver<Vec<u8>>,
+    buf_pool_send: crossbeam_channel::Sender<Vec<u8>>,
 }
 
 struct TxEndpoint {
     queue: nusb::transfer::Queue<Vec<u8>>,
-    buf_pool: mpsc::Receiver<Vec<u8>>,
-    buf_pool_send: mpsc::Sender<Vec<u8>>,
+    buf_pool: crossbeam_channel::Receiver<Vec<u8>>,
+    buf_pool_send: crossbeam_channel::Sender<Vec<u8>>,
 }
 
 impl HackRf {

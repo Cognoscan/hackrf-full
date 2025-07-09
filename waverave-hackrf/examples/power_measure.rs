@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     hackrf.set_freq(915_000_000).await?;
 
     // Start receiving, in bursts of 16384 samples
-    let mut hackrf_rx = hackrf.start_rx(16384).await.map_err(|e| e.err)?;
+    let mut hackrf_rx = hackrf.start_rx(16384).await?;
 
     // Queue up 64 transfers, retrieve them, and measure average power.
     for _ in 0..64 {

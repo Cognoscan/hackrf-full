@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     let mut file = tokio::fs::File::open(&file_name).await?;
 
     // Start transmitting, in bursts of 8192 samples
-    let mut hackrf_tx = hackrf.start_tx(8192).await.map_err(|e| e.err)?;
+    let mut hackrf_tx = hackrf.start_tx(8192).await?;
 
     // Set up an asynchronous process that fills buffers and sends them on to
     // the transmitter.

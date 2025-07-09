@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     hackrf.set_freq(915_000_000).await?;
 
     // Start receiving, in bursts of 8192 samples
-    let mut hackrf_rx = hackrf.start_rx(8192).await.map_err(|e| e.err)?;
+    let mut hackrf_rx = hackrf.start_rx(8192).await?;
 
     // Separate the file writer from the sample reader with a separate task
     let (data_send, mut data_recv) = tokio::sync::mpsc::unbounded_channel::<Buffer>();

@@ -312,12 +312,14 @@ impl Sweep {
     ///
     /// This attempts to cancel all transfers and then complete whatever is
     /// left. Transfer errors are ignored.
-    pub async fn stop(mut self) -> Result<HackRf, Error> {
+    pub async fn stop(mut self) -> Result<HackRf, StateChangeError> {
         self.rf.rx.queue.cancel_all();
         while self.pending() > 0 {
             let _ = self.next_complete().await;
         }
-        self.rf.set_transceiver_mode(TransceiverMode::Off).await?;
-        Ok(self.rf)
+        match self.rf.set_transceiver_mode(TransceiverMode::Off).await {
+            Ok(_) => Ok(self.rf),
+            Err(err) => Err(StateChangeError { err, rf: self.rf }),
+        }
     }
 }
